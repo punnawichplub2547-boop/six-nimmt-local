@@ -9,10 +9,19 @@ let busyEvent = '';
 renderHome();
 
 socket.on('state', (nextState) => {
+  const previousState = state;
   state = nextState;
   error = '';
   busyEvent = '';
-  render();
+
+  const animatePhases = ['choosing', 'choose-row', 'round-over', 'game-over'];
+  if (previousState && 
+      (previousState.phase === 'reveal' || previousState.phase === 'choose-row') && 
+      animatePhases.includes(nextState.phase)) {
+    startResolveAnimation(previousState, nextState);
+  } else {
+    render();
+  }
 });
 
 socket.on('disconnect', () => {
@@ -48,7 +57,134 @@ function emit(eventName, payload = {}) {
   });
 }
 
+let isAnimatingResolve = false;
+let countdownInterval = null;
+
+function startRevealCountdown() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  
+  countdownInterval = setInterval(() => {
+    const timerEl = document.querySelector('#reveal-timer');
+    if (!timerEl || !state || state.phase !== 'reveal') {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+      return;
+    }
+    
+    const secondsLeft = Math.max(0, Math.ceil((state.revealEndTime - Date.now()) / 1000));
+    timerEl.textContent = secondsLeft;
+    
+    if (secondsLeft <= 0) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+  }, 200);
+}
+
+function startResolveAnimation(previousState, nextState) {
+  const nextLogs = nextState.lastLogs || [];
+  const prevLogs = previousState.lastLogs || [];
+  const newLogs = getNewLogs(prevLogs, nextLogs);
+
+  if (newLogs.length === 0) {
+    state = nextState;
+    render();
+    return;
+  }
+
+  isAnimatingResolve = true;
+  let currentAnimatingState = JSON.parse(JSON.stringify(previousState));
+
+  let logIndex = 0;
+
+  function processNextLog() {
+    if (logIndex >= newLogs.length) {
+      isAnimatingResolve = false;
+      state = nextState;
+      render();
+      return;
+    }
+
+    const log = newLogs[logIndex];
+    logIndex++;
+
+    // Clear previous flash states
+    for (const r of currentAnimatingState.rows) {
+      delete r.justTaken;
+      for (const c of r) {
+        delete c.justPlaced;
+      }
+    }
+
+    applyLogToState(currentAnimatingState, log);
+    
+    currentAnimatingState.lastLogs.push(log);
+    if (currentAnimatingState.lastLogs.length > 8) {
+      currentAnimatingState.lastLogs.shift();
+    }
+
+    state = currentAnimatingState;
+    render();
+
+    setTimeout(processNextLog, 900);
+  }
+
+  processNextLog();
+}
+
+function getNewLogs(prevLogs, nextLogs) {
+  return nextLogs.filter(log => {
+    return !prevLogs.some(pl => 
+      pl.type === log.type && 
+      pl.playerId === log.playerId && 
+      pl.card?.value === log.card?.value &&
+      pl.rowIndex === log.rowIndex
+    );
+  });
+}
+
+function applyLogToState(animState, log) {
+  const cardValue = log.card?.value;
+  if (!cardValue) return;
+
+  if (animState.revealedCards) {
+    animState.revealedCards = animState.revealedCards.filter(c => c.card.value !== cardValue);
+  }
+
+  if (animState.pendingCard && animState.pendingCard.value === cardValue) {
+    animState.pendingCard = null;
+    animState.pendingPlayerId = null;
+  }
+
+  if (log.type === 'place-card') {
+    const row = animState.rows[log.rowIndex];
+    if (row && !row.some(c => c.value === cardValue)) {
+      row.push({ ...log.card, justPlaced: true });
+    }
+  } else if (log.type === 'take-row' || log.type === 'choose-row') {
+    const row = animState.rows[log.rowIndex];
+    if (row) {
+      const penalty = row.reduce((sum, c) => sum + c.bulls, 0);
+      const player = animState.players.find(p => p.id === log.playerId);
+      if (player) {
+        player.hp = Math.max(0, player.hp - penalty);
+      }
+      animState.rows[log.rowIndex] = [{ ...log.card, justPlaced: true }];
+      animState.rows[log.rowIndex].justTaken = true;
+    }
+  } else if (log.type === 'needs-row-choice') {
+    animState.phase = 'choose-row';
+    animState.pendingCard = log.card;
+    animState.pendingPlayerId = log.playerId;
+  }
+}
+
 function render() {
+  if (!isAnimatingResolve && countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+
   if (!state) {
     renderHome();
     return;
@@ -60,6 +196,10 @@ function render() {
   }
 
   renderGame();
+
+  if (state.phase === 'reveal' && !isAnimatingResolve) {
+    startRevealCountdown();
+  }
 }
 
 function renderHome() {
@@ -158,7 +298,7 @@ function renderLobby() {
 }
 
 function renderGame() {
-  const actionBusy = Boolean(busyEvent);
+  const actionBusy = Boolean(busyEvent) || isAnimatingResolve;
   const choosingCard = state.phase === 'choosing' && !state.mySelected && !actionBusy;
   const waitingForCards = state.phase === 'choosing' && state.mySelected;
   const choosingRow = state.phase === 'choose-row' && state.pendingPlayerId === state.myId && !actionBusy;
@@ -267,7 +407,8 @@ function renderRow(row, index, choosingRow) {
   const rowClass = [
     'table-row',
     choosingRow ? 'row-choice' : '',
-    row.length >= 5 ? 'row-full' : ''
+    row.length >= 5 ? 'row-full' : '',
+    row.justTaken ? 'row-taken-flash' : ''
   ].filter(Boolean).join(' ');
   const rowAttributes = choosingRow
     ? `role="button" tabindex="0" data-row="${index}" aria-label="Take row ${index + 1} for ${rowPenalty} HP damage"`
@@ -283,16 +424,18 @@ function renderRow(row, index, choosingRow) {
 }
 
 function renderRowSlots(row) {
-  return Array.from({ length: 5 }, (_, index) => {
+  const totalSlots = Math.max(5, row.length + 1);
+  return Array.from({ length: totalSlots }, (_, index) => {
     const card = row[index];
+    const isDanger = index === 5;
     const slotClasses = [
       'card-slot',
-      index === 4 ? 'danger-slot' : '',
+      isDanger ? 'danger-slot' : '',
       card ? 'filled-slot' : 'empty-slot'
     ].filter(Boolean).join(' ');
 
     return `
-      <span class="${slotClasses}" aria-label="${index === 4 ? 'Danger slot' : `Slot ${index + 1}`}">
+      <span class="${slotClasses}" aria-label="${isDanger ? 'Danger slot' : `Slot ${index + 1}`}">
         ${card ? renderCard(card, { compact: true }) : '<span class="slot-number"></span>'}
       </span>
     `;
@@ -308,7 +451,8 @@ function renderCard(card, options = {}) {
     cardClass({ value, bulls }),
     selectable ? 'selectable' : '',
     compact ? 'compact-card' : '',
-    pending ? 'pending-card-art' : ''
+    pending ? 'pending-card-art' : '',
+    card?.justPlaced ? 'just-placed' : ''
   ].filter(Boolean).join(' ');
   const attributes = selectable
     ? `data-card="${value}" aria-label="Choose card ${value}, ${bulls} penalty points"`
@@ -385,12 +529,9 @@ function renderReveal() {
 }
 
 function renderRoundAction() {
-  if (state.phase === 'reveal' && state.myId === state.hostId) {
-    return `<button id="resolve-cards" type="button" class="primary-action" ${busyEvent ? 'disabled' : ''}>Resolve Cards</button>`;
-  }
-
   if (state.phase === 'reveal') {
-    return '<p class="muted-note">Cards are revealed. Waiting for the host to resolve them.</p>';
+    const secondsLeft = Math.max(0, Math.ceil((state.revealEndTime - Date.now()) / 1000));
+    return `<p class="reveal-countdown-note">Placing cards automatically in <strong id="reveal-timer">${secondsLeft}</strong> seconds...</p>`;
   }
 
   if (state.phase === 'round-over' && state.myId === state.hostId) {

@@ -14,7 +14,11 @@ const port = Number(process.env.PORT ?? 3000);
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
-const rooms = new RoomManager();
+const rooms = new RoomManager({
+  onStateChange: (code) => {
+    emitRoom(code);
+  }
+});
 
 app.use(express.static(publicDir));
 

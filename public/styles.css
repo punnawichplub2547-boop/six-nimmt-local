@@ -984,3 +984,35 @@ input:focus {
     font-size: 1.85rem;
   }
 }
+
+@keyframes card-place-anim {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+    filter: brightness(1.8);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+.just-placed {
+  animation: card-place-anim 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+@keyframes row-take-flash {
+  0% {
+    background-color: rgba(199, 43, 46, 0.82);
+    box-shadow: 0 0 16px rgba(199, 43, 46, 0.82);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.row-taken-flash {
+  animation: row-take-flash 0.8s ease-out;
+}

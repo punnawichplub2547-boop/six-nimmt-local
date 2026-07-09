@@ -17,10 +17,11 @@ const MIN_STARTING_HP = 1;
 const MAX_STARTING_HP = 500;
 
 export class RoomManager {
-  constructor({ codeGenerator = createRoomCode, rng = Math.random } = {}) {
+  constructor({ codeGenerator = createRoomCode, rng = Math.random, onStateChange } = {}) {
     this.rooms = new Map();
     this.codeGenerator = codeGenerator;
     this.rng = rng;
+    this.onStateChange = onStateChange;
   }
 
   createRoom(socketId, name) {
@@ -108,6 +109,17 @@ export class RoomManager {
     if (Object.keys(room.selectedCards).length === room.players.length) {
       room.revealedCards = revealedCards(room);
       room.phase = 'reveal';
+      room.revealEndTime = Date.now() + 3000;
+
+      const currentTurn = room.turn;
+      setTimeout(() => {
+        if (room.phase === 'reveal' && room.turn === currentTurn) {
+          this.resolveTurn(room);
+          if (this.onStateChange) {
+            this.onStateChange(room.code);
+          }
+        }
+      }, 3000);
     }
 
     return this.getPublicView(room.code);
@@ -240,7 +252,8 @@ function publicView(room) {
     revealedCards: room.revealedCards.map(clonePlayedCard),
     pendingPlayerId: room.pending?.playerId ?? null,
     pendingCard: room.pending ? cloneCard(room.pending.card) : null,
-    lastLogs: room.lastLogs.map(cloneLog)
+    lastLogs: room.lastLogs.map(cloneLog),
+    revealEndTime: room.revealEndTime || null
   };
 }
 
