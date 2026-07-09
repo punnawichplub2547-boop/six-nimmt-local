@@ -1,5 +1,6 @@
 const socket = io();
 const app = document.querySelector('#app');
+const ACK_TIMEOUT_MS = 8000;
 
 let state = null;
 let error = '';
@@ -14,12 +15,26 @@ socket.on('state', (nextState) => {
   render();
 });
 
+socket.on('disconnect', () => {
+  busyEvent = '';
+  error = 'Connection lost. Rejoin the room with the same name to continue.';
+  render();
+});
+
 function emit(eventName, payload = {}) {
+  if (busyEvent) return;
+
   busyEvent = eventName;
   render();
 
-  socket.emit(eventName, payload, (response = {}) => {
+  socket.timeout(ACK_TIMEOUT_MS).emit(eventName, payload, (ackError, response = {}) => {
     busyEvent = '';
+
+    if (ackError) {
+      error = 'No reply from the table. Try again.';
+      render();
+      return;
+    }
 
     if (!response.ok) {
       error = response.error || 'Something went wrong';
@@ -118,7 +133,15 @@ function renderLobby() {
       </div>
 
       <div class="panel lobby-actions">
-        <p>${isHost ? 'Start when at least one friend has joined.' : 'Waiting for the host to start.'}</p>
+        <div class="hp-setting">
+          <p>${isHost ? 'Start when at least one friend has joined.' : 'Waiting for the host to start.'}</p>
+          ${isHost
+            ? `<label>
+                <span>Starting HP</span>
+                <input id="starting-hp" name="startingHp" type="number" min="1" max="500" step="1" value="${escapeHtml(state.startingHp || 66)}">
+              </label>`
+            : `<p class="muted-note">Starting HP: ${escapeHtml(state.startingHp || 66)}</p>`}
+        </div>
         <button id="start" type="button" class="primary-action" ${canStart ? '' : 'disabled'}>
           Start Game
         </button>
@@ -128,17 +151,22 @@ function renderLobby() {
     </section>
   `;
 
-  document.querySelector('#start').addEventListener('click', () => emit('start-game', {}));
+  document.querySelector('#start').addEventListener('click', () => {
+    const startingHp = Number(document.querySelector('#starting-hp')?.value || state.startingHp || 66);
+    emit('start-game', { startingHp });
+  });
 }
 
 function renderGame() {
-  const choosingCard = state.phase === 'choosing' && !state.mySelected;
+  const actionBusy = Boolean(busyEvent);
+  const choosingCard = state.phase === 'choosing' && !state.mySelected && !actionBusy;
   const waitingForCards = state.phase === 'choosing' && state.mySelected;
-  const choosingRow = state.phase === 'choose-row' && state.pendingPlayerId === state.myId;
+  const choosingRow = state.phase === 'choose-row' && state.pendingPlayerId === state.myId && !actionBusy;
+  const handTitle = waitingForCards || state.phase === 'reveal' ? 'Card chosen' : 'Your hand';
 
   app.innerHTML = `
     <section class="game-shell" aria-label="Game table">
-      <main class="table-panel">
+      <section class="table-panel">
         <header class="table-topbar">
           <div>
             <span class="room-chip">Room ${escapeHtml(state.code)}</span>
@@ -148,6 +176,7 @@ function renderGame() {
         </header>
 
         ${renderPendingCard()}
+        ${renderReveal()}
 
         <div class="rows" aria-label="Table rows">
           ${state.rows.map((row, index) => renderRow(row, index, choosingRow)).join('')}
@@ -155,19 +184,19 @@ function renderGame() {
 
         <section class="hand-panel" aria-labelledby="hand-title">
           <div class="hand-heading">
-            <h2 id="hand-title">${waitingForCards ? 'Card chosen' : 'Your hand'}</h2>
+            <h2 id="hand-title">${handTitle}</h2>
             <span>${escapeHtml(handStatusText())}</span>
           </div>
           <div class="cards hand-cards">
             ${(state.hand || []).map((card) => renderCard(card, { selectable: choosingCard })).join('')}
           </div>
         </section>
-      </main>
+      </section>
 
       <aside class="side-panel" aria-label="Game status">
         <section class="side-section">
           <div class="panel-heading">
-            <h2>Scores</h2>
+            <h2>HP</h2>
             <span>${state.playerCount || state.players.length} players</span>
           </div>
           ${state.players.map(renderPlayer).join('')}
@@ -202,33 +231,72 @@ function renderGame() {
 
   document.querySelectorAll('[data-card]').forEach((cardButton) => {
     cardButton.addEventListener('click', () => {
+      if (busyEvent) return;
       emit('choose-card', { value: Number(cardButton.dataset.card) });
     });
   });
 
-  document.querySelectorAll('[data-row]').forEach((rowButton) => {
-    rowButton.addEventListener('click', () => {
-      emit('choose-row', { rowIndex: Number(rowButton.dataset.row) });
+  document.querySelectorAll('[data-row]').forEach((rowChoice) => {
+    const chooseRow = () => {
+      if (busyEvent) return;
+      emit('choose-row', { rowIndex: Number(rowChoice.dataset.row) });
+    };
+
+    rowChoice.addEventListener('click', chooseRow);
+    rowChoice.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+
+      event.preventDefault();
+      chooseRow();
     });
   });
 
-  document.querySelector('#next-round')?.addEventListener('click', () => emit('next-round', {}));
+  document.querySelector('#next-round')?.addEventListener('click', () => {
+    if (busyEvent) return;
+    emit('next-round', {});
+  });
+
+  document.querySelector('#resolve-cards')?.addEventListener('click', () => {
+    if (busyEvent) return;
+    emit('resolve-cards', {});
+  });
 }
 
 function renderRow(row, index, choosingRow) {
   const rowPenalty = (row || []).reduce((total, card) => total + Number(card.bulls || 0), 0);
-  const rowClass = choosingRow ? 'table-row row-choice' : 'table-row';
+  const rowClass = [
+    'table-row',
+    choosingRow ? 'row-choice' : '',
+    row.length >= 5 ? 'row-full' : ''
+  ].filter(Boolean).join(' ');
   const rowAttributes = choosingRow
-    ? `data-row="${index}" aria-label="Take row ${index + 1} worth ${rowPenalty} penalty points"`
-    : 'tabindex="-1" aria-disabled="true"';
+    ? `role="button" tabindex="0" data-row="${index}" aria-label="Take row ${index + 1} for ${rowPenalty} HP damage"`
+    : '';
 
   return `
-    <button type="button" class="${rowClass}" ${rowAttributes}>
+    <div class="${rowClass}" ${rowAttributes}>
       <span class="row-label">R${index + 1}</span>
-      <span class="row-cards cards">${(row || []).map((card) => renderCard(card, { compact: true })).join('')}</span>
-      <span class="row-penalty">${rowPenalty} bull${rowPenalty === 1 ? '' : 's'}</span>
-    </button>
+      <span class="row-cards cards">${renderRowSlots(row || [])}</span>
+      <span class="row-penalty">${rowPenalty} HP damage</span>
+    </div>
   `;
+}
+
+function renderRowSlots(row) {
+  return Array.from({ length: 5 }, (_, index) => {
+    const card = row[index];
+    const slotClasses = [
+      'card-slot',
+      index === 4 ? 'danger-slot' : '',
+      card ? 'filled-slot' : 'empty-slot'
+    ].filter(Boolean).join(' ');
+
+    return `
+      <span class="${slotClasses}" aria-label="${index === 4 ? 'Danger slot' : `Slot ${index + 1}`}">
+        ${card ? renderCard(card, { compact: true }) : '<span class="slot-number"></span>'}
+      </span>
+    `;
+  }).join('');
 }
 
 function renderCard(card, options = {}) {
@@ -244,10 +312,12 @@ function renderCard(card, options = {}) {
   ].filter(Boolean).join(' ');
   const attributes = selectable
     ? `data-card="${value}" aria-label="Choose card ${value}, ${bulls} penalty points"`
-    : 'tabindex="-1" aria-disabled="true"';
+    : `aria-label="Card ${value}, ${bulls} penalty points"`;
+  const tagName = selectable ? 'button' : 'span';
+  const buttonType = selectable ? ' type="button"' : '';
 
   return `
-    <button type="button" class="${className}" ${attributes}>
+    <${tagName}${buttonType} class="${className}" ${attributes}>
       <span class="corner tl">${value}</span>
       <span class="corner tr">${value}</span>
       <span class="pips top">${renderBullMarks(bulls)}</span>
@@ -260,7 +330,7 @@ function renderCard(card, options = {}) {
       <span class="pips bottom">${renderBullMarks(bulls)}</span>
       <span class="corner bl">${value}</span>
       <span class="corner br">${value}</span>
-    </button>
+    </${tagName}>
   `;
 }
 
@@ -286,16 +356,45 @@ function renderPendingCard() {
     <section class="pending-banner" aria-live="polite">
       <div>
         <strong>${escapeHtml(chooser)} to take a row</strong>
-        <p>Pending card ${escapeHtml(state.pendingCard.value)} is lower than every row end.</p>
+        <p>Pending card ${escapeHtml(state.pendingCard.value)} is lower than every row end. Choose the lowest HP damage you can live with.</p>
       </div>
       ${renderCard(state.pendingCard, { pending: true })}
     </section>
   `;
 }
 
+function renderReveal() {
+  if (state.phase !== 'reveal') return '';
+
+  return `
+    <section class="reveal-panel" aria-live="polite">
+      <div class="reveal-heading">
+        <h2>Cards revealed</h2>
+        <span>Lowest card resolves first</span>
+      </div>
+      <div class="reveal-cards">
+        ${(state.revealedCards || []).map((played) => `
+          <div class="revealed-card">
+            <strong>${escapeHtml(playerName(played.playerId))}</strong>
+            ${renderCard(played.card, { pending: true })}
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderRoundAction() {
+  if (state.phase === 'reveal' && state.myId === state.hostId) {
+    return `<button id="resolve-cards" type="button" class="primary-action" ${busyEvent ? 'disabled' : ''}>Resolve Cards</button>`;
+  }
+
+  if (state.phase === 'reveal') {
+    return '<p class="muted-note">Cards are revealed. Waiting for the host to resolve them.</p>';
+  }
+
   if (state.phase === 'round-over' && state.myId === state.hostId) {
-    return '<button id="next-round" type="button" class="primary-action">Next Round</button>';
+    return `<button id="next-round" type="button" class="primary-action" ${busyEvent ? 'disabled' : ''}>Next Round</button>`;
   }
 
   if (state.phase === 'round-over') {
@@ -303,8 +402,8 @@ function renderRoundAction() {
   }
 
   if (state.phase === 'game-over') {
-    const winner = [...state.players].sort((a, b) => a.score - b.score)[0];
-    return `<p class="game-over-note">Game over. Lowest score wins: ${escapeHtml(winner?.name || 'Player')}.</p>`;
+    const winner = [...state.players].sort((a, b) => b.hp - a.hp)[0];
+    return `<p class="game-over-note">Game over. Most HP left wins: ${escapeHtml(winner?.name || 'Player')}.</p>`;
   }
 
   return '';
@@ -320,7 +419,7 @@ function renderPlayer(player) {
   return `
     <div class="player-row">
       <span class="player-name">${escapeHtml(player.name)} ${labels}</span>
-      <strong>${escapeHtml(player.score)}</strong>
+      <strong>${escapeHtml(player.hp)} HP</strong>
     </div>
   `;
 }
@@ -340,12 +439,12 @@ function renderLog(log) {
 
   if (log.type === 'take-row') {
     const penalty = (log.penaltyCards || []).reduce((total, cardItem) => total + Number(cardItem.bulls || 0), 0);
-    return `<p class="log-entry">${name} played ${escapeHtml(card)} and took row ${escapeHtml(row)} for ${escapeHtml(penalty)}.</p>`;
+    return `<p class="log-entry">${name} played ${escapeHtml(card)} and lost ${escapeHtml(penalty)} HP on row ${escapeHtml(row)}.</p>`;
   }
 
   if (log.type === 'choose-row') {
     const penalty = (log.penaltyCards || []).reduce((total, cardItem) => total + Number(cardItem.bulls || 0), 0);
-    return `<p class="log-entry">${name} chose row ${escapeHtml(row)} for ${escapeHtml(card)} and took ${escapeHtml(penalty)}.</p>`;
+    return `<p class="log-entry">${name} chose row ${escapeHtml(row)} for ${escapeHtml(card)} and lost ${escapeHtml(penalty)} HP.</p>`;
   }
 
   return '<p class="log-entry">Move resolved.</p>';
@@ -359,6 +458,7 @@ function phaseText() {
   if (!state) return 'Home';
   if (state.phase === 'lobby') return 'Lobby';
   if (state.phase === 'choosing') return state.mySelected ? 'Waiting for friends' : 'Choose one card';
+  if (state.phase === 'reveal') return 'Cards revealed';
   if (state.phase === 'choose-row') {
     if (!state.pendingCard) return 'Choose a row';
     return state.pendingPlayerId === state.myId
@@ -374,6 +474,7 @@ function phaseText() {
 function handStatusText() {
   if (state.phase === 'choosing' && !state.mySelected) return 'Pick carefully. Lowest selected cards resolve first.';
   if (state.phase === 'choosing' && state.mySelected) return 'Waiting for everyone else to choose.';
+  if (state.phase === 'reveal') return 'Everyone picked. Study the order before cards are placed.';
   if (state.phase === 'choose-row' && state.pendingPlayerId === state.myId) return 'Choose the row you want to take.';
   if (state.phase === 'choose-row') return 'Another player is choosing a row.';
   if (state.phase === 'round-over') return 'Round complete.';
