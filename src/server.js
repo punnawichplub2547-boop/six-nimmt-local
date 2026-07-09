@@ -46,7 +46,16 @@ io.on('connection', (socket) => {
   socket.on('start-game', (payload = {}, reply) => {
     handle(getNoPayloadReply(payload, reply), () => {
       const code = requireJoinedRoom(joinedRoomCode);
-      rooms.startGame(code, socket.id);
+      rooms.startGame(code, socket.id, payload ?? {});
+      emitRoom(code);
+      return rooms.getPrivateView(code, socket.id);
+    });
+  });
+
+  socket.on('resolve-cards', (payload = {}, reply) => {
+    handle(getNoPayloadReply(payload, reply), () => {
+      const code = requireJoinedRoom(joinedRoomCode);
+      rooms.resolveCards(code, socket.id);
       emitRoom(code);
       return rooms.getPrivateView(code, socket.id);
     });
