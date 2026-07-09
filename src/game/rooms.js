@@ -1,7 +1,7 @@
 import {
-  SCORE_LIMIT,
   cloneCard,
   cloneLog,
+  clonePlayedCard,
   cloneRows,
   continueAfterRowChoice,
   createRound,
@@ -12,6 +12,9 @@ import {
 
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
+const DEFAULT_STARTING_HP = 66;
+const MIN_STARTING_HP = 1;
+const MAX_STARTING_HP = 500;
 
 export class RoomManager {
   constructor({ codeGenerator = createRoomCode, rng = Math.random } = {}) {
@@ -29,10 +32,12 @@ export class RoomManager {
       code,
       hostId: socketId,
       phase: 'lobby',
-      players: [{ id: socketId, name: cleanName, score: 0, connected: true }],
+      startingHp: DEFAULT_STARTING_HP,
+      players: [{ id: socketId, name: cleanName, hp: DEFAULT_STARTING_HP, connected: true }],
       hands: {},
       rows: [],
       selectedCards: {},
+      revealedCards: [],
       roundPenaltyCards: {},
       turn: 0,
       pending: null,
@@ -45,25 +50,30 @@ export class RoomManager {
   joinRoom(code, socketId, name) {
     const room = this.requireRoom(code);
     const cleanName = validateName(name);
-    if (room.phase !== 'lobby') throw new Error('Game already started');
     if (room.players.some((player) => player.id === socketId)) {
       throw new Error('Player already joined');
     }
-    if (room.players.length >= MAX_PLAYERS) throw new Error('Room is full');
-    if (room.players.some((player) => player.name.toLowerCase() === cleanName.toLowerCase())) {
-      throw new Error('Name already used');
+    const existingNamePlayer = room.players.find((player) => sameName(player.name, cleanName));
+    if (existingNamePlayer) {
+      if (existingNamePlayer.connected) throw new Error('Name already used');
+      return reclaimSeat(room, existingNamePlayer, socketId);
     }
-    room.players.push({ id: socketId, name: cleanName, score: 0, connected: true });
+
+    if (room.phase !== 'lobby') throw new Error('Game already started');
+    if (room.players.length >= MAX_PLAYERS) throw new Error('Room is full');
+    room.players.push({ id: socketId, name: cleanName, hp: room.startingHp, connected: true });
     return this.getPublicView(room.code);
   }
 
-  startGame(code, socketId) {
+  startGame(code, socketId, options = {}) {
     const room = this.requireRoom(code);
     if (room.phase !== 'lobby') throw new Error('Game already started');
     if (room.hostId !== socketId) throw new Error('Only the host can start');
     if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
       throw new Error('Need 2-4 players');
     }
+    room.startingHp = validateStartingHp(options.startingHp ?? room.startingHp);
+    for (const player of room.players) player.hp = room.startingHp;
     this.startNewRound(room);
     return this.getPublicView(room.code);
   }
@@ -75,6 +85,7 @@ export class RoomManager {
     room.hands = round.hands;
     room.rows = round.rows;
     room.selectedCards = {};
+    room.revealedCards = [];
     room.roundPenaltyCards = Object.fromEntries(playerIds.map((playerId) => [playerId, []]));
     room.turn = 1;
     room.pending = null;
@@ -95,15 +106,24 @@ export class RoomManager {
     room.selectedCards[socketId] = card;
 
     if (Object.keys(room.selectedCards).length === room.players.length) {
-      this.resolveTurn(room);
+      room.revealedCards = revealedCards(room);
+      room.phase = 'reveal';
     }
 
     return this.getPublicView(room.code);
   }
 
+  resolveCards(code, socketId) {
+    const room = this.requireRoom(code);
+    if (room.phase !== 'reveal') throw new Error('No revealed cards to resolve');
+    if (room.hostId !== socketId) throw new Error('Only the host can resolve cards');
+    this.resolveTurn(room);
+    return this.getPublicView(room.code);
+  }
+
   resolveTurn(room) {
     room.phase = 'resolving';
-    const playedCards = Object.entries(room.selectedCards).map(([playerId, card]) => ({ playerId, card }));
+    const playedCards = room.revealedCards.length > 0 ? room.revealedCards : revealedCards(room);
     const result = resolvePlayedCards(room.rows, playedCards);
     this.applyResolutionResult(room, result);
   }
@@ -127,17 +147,28 @@ export class RoomManager {
     room.lastLogs = result.logs.slice(-8);
 
     if (result.pending) {
-      room.pending = result.pending;
+      applyHpDamage(room, result.penaltyCardsByPlayer);
+      if (isGameOver(room)) {
+        endGame(room);
+        return;
+      }
+      room.pending = {
+        ...result.pending,
+        penaltyCardsByPlayer: {}
+      };
       room.phase = 'choose-row';
       return;
     }
 
-    for (const [playerId, cards] of Object.entries(result.penaltyCardsByPlayer)) {
-      room.roundPenaltyCards[playerId] = [...(room.roundPenaltyCards[playerId] ?? []), ...cards];
+    applyHpDamage(room, result.penaltyCardsByPlayer);
+    if (isGameOver(room)) {
+      endGame(room);
+      return;
     }
 
     room.pending = null;
     room.selectedCards = {};
+    room.revealedCards = [];
 
     const roundFinished = Object.values(room.hands).every((hand) => hand.length === 0);
     if (roundFinished) {
@@ -150,11 +181,7 @@ export class RoomManager {
   }
 
   finishRound(room) {
-    for (const player of room.players) {
-      const roundPenalty = getRowPenalty(room.roundPenaltyCards[player.id] ?? []);
-      player.score += roundPenalty;
-    }
-    room.phase = room.players.some((player) => player.score >= SCORE_LIMIT) ? 'game-over' : 'round-over';
+    room.phase = 'round-over';
   }
 
   nextRound(code, socketId) {
@@ -197,11 +224,12 @@ function publicView(room) {
   return {
     code: room.code,
     hostId: room.hostId,
+    startingHp: room.startingHp,
     phase: room.phase,
     players: room.players.map((player) => ({
       id: player.id,
       name: player.name,
-      score: player.score,
+      hp: player.hp,
       connected: player.connected,
       isHost: player.id === room.hostId
     })),
@@ -209,6 +237,7 @@ function publicView(room) {
     selectedCount: Object.keys(room.selectedCards).length,
     playerCount: room.players.length,
     turn: room.turn,
+    revealedCards: room.revealedCards.map(clonePlayedCard),
     pendingPlayerId: room.pending?.playerId ?? null,
     pendingCard: room.pending ? cloneCard(room.pending.card) : null,
     lastLogs: room.lastLogs.map(cloneLog)
@@ -223,6 +252,100 @@ function validateName(name) {
   const cleanName = String(name ?? '').trim().slice(0, 18);
   if (!cleanName) throw new Error('Name is required');
   return cleanName;
+}
+
+function validateStartingHp(value) {
+  const hp = Number(value);
+  if (!Number.isInteger(hp) || hp < MIN_STARTING_HP || hp > MAX_STARTING_HP) {
+    throw new Error(`HP must be between ${MIN_STARTING_HP} and ${MAX_STARTING_HP}`);
+  }
+  return hp;
+}
+
+function revealedCards(room) {
+  return Object.entries(room.selectedCards)
+    .map(([playerId, card]) => ({ playerId, card: cloneCard(card) }))
+    .sort((left, right) => left.card.value - right.card.value);
+}
+
+function applyHpDamage(room, penaltyCardsByPlayer) {
+  for (const [playerId, cards] of Object.entries(penaltyCardsByPlayer)) {
+    const penaltyCards = cards.map(cloneCard);
+    room.roundPenaltyCards[playerId] = [...(room.roundPenaltyCards[playerId] ?? []), ...penaltyCards];
+    const player = room.players.find((candidate) => candidate.id === playerId);
+    if (player) player.hp -= getRowPenalty(penaltyCards);
+  }
+}
+
+function isGameOver(room) {
+  return room.players.some((player) => player.hp <= 0);
+}
+
+function endGame(room) {
+  room.pending = null;
+  room.selectedCards = {};
+  room.revealedCards = [];
+  room.phase = 'game-over';
+}
+
+function sameName(left, right) {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function reclaimSeat(room, player, socketId) {
+  const oldSocketId = player.id;
+  replacePlayerId(room, oldSocketId, socketId);
+  player.id = socketId;
+  player.connected = true;
+  return publicView(room);
+}
+
+function replacePlayerId(room, oldSocketId, socketId) {
+  if (room.hostId === oldSocketId) room.hostId = socketId;
+  transferKey(room.hands, oldSocketId, socketId);
+  transferKey(room.selectedCards, oldSocketId, socketId);
+  transferKey(room.roundPenaltyCards, oldSocketId, socketId);
+  room.revealedCards = room.revealedCards.map((played) => ({
+    ...played,
+    playerId: played.playerId === oldSocketId ? socketId : played.playerId
+  }));
+  room.pending = replacePendingPlayerId(room.pending, oldSocketId, socketId);
+  room.lastLogs = room.lastLogs.map((log) => replaceLogPlayerId(log, oldSocketId, socketId));
+}
+
+function transferKey(record, oldKey, newKey) {
+  if (!Object.hasOwn(record, oldKey)) return;
+  record[newKey] = record[oldKey];
+  delete record[oldKey];
+}
+
+function replacePendingPlayerId(pending, oldSocketId, socketId) {
+  if (!pending) return null;
+
+  return {
+    ...pending,
+    playerId: pending.playerId === oldSocketId ? socketId : pending.playerId,
+    playedCards: pending.playedCards?.map((played) => ({
+      ...played,
+      playerId: played.playerId === oldSocketId ? socketId : played.playerId
+    })),
+    penaltyCardsByPlayer: replaceRecordKey(pending.penaltyCardsByPlayer, oldSocketId, socketId),
+    logs: pending.logs?.map((log) => replaceLogPlayerId(log, oldSocketId, socketId))
+  };
+}
+
+function replaceRecordKey(record, oldKey, newKey) {
+  if (!record || !Object.hasOwn(record, oldKey)) return record;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key === oldKey ? newKey : key, value])
+  );
+}
+
+function replaceLogPlayerId(log, oldSocketId, socketId) {
+  return {
+    ...log,
+    playerId: log.playerId === oldSocketId ? socketId : log.playerId
+  };
 }
 
 function createRoomCode() {

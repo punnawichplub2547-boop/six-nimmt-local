@@ -8,7 +8,29 @@ test('creates room with host and short code', () => {
   assert.equal(room.code, '4821');
   assert.equal(room.hostId, 'socket-1');
   assert.equal(room.players.length, 1);
+  assert.equal(room.startingHp, 66);
+  assert.equal(room.players[0].hp, 66);
   assert.equal(Object.hasOwn(room, 'hands'), false);
+});
+
+test('host can start a game with custom starting hp', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+
+  const view = manager.startGame('4821', 'socket-1', { startingHp: 40 });
+
+  assert.equal(view.startingHp, 40);
+  assert.deepEqual(view.players.map((player) => player.hp), [40, 40]);
+});
+
+test('validates custom starting hp', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+
+  assert.throws(() => manager.startGame('4821', 'socket-1', { startingHp: 0 }), /HP must be between/);
+  assert.throws(() => manager.startGame('4821', 'socket-1', { startingHp: 501 }), /HP must be between/);
 });
 
 test('joins room and rejects duplicate names', () => {
@@ -55,6 +77,44 @@ test('blocks starting a game after it has already started', () => {
   assert.throws(() => manager.startGame('4821', 'socket-1'), /Game already started/);
 });
 
+test('allows a disconnected player to reclaim their active game seat by name', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1');
+  const originalHand = manager.getPrivateView('4821', 'socket-2').hand;
+
+  manager.disconnect('socket-2');
+  manager.joinRoom('4821', 'socket-3', 'Friend');
+
+  const view = manager.getPrivateView('4821', 'socket-3');
+  assert.deepEqual(view.hand, originalHand);
+  assert.equal(view.players.some((player) => player.id === 'socket-2'), false);
+  assert.equal(view.players.find((player) => player.id === 'socket-3').connected, true);
+});
+
+test('reclaimed seat keeps selected card state and can finish the turn', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1');
+  const room = manager.requireRoom('4821');
+  room.rows = [[{ value: 10, bulls: 3 }], [{ value: 30, bulls: 3 }], [{ value: 50, bulls: 3 }], [{ value: 70, bulls: 3 }]];
+  room.hands = {
+    'socket-1': [{ value: 12, bulls: 1 }],
+    'socket-2': [{ value: 32, bulls: 1 }]
+  };
+
+  manager.chooseCard('4821', 'socket-2', 32);
+  manager.disconnect('socket-2');
+  manager.joinRoom('4821', 'socket-3', 'Friend');
+
+  assert.equal(manager.getPrivateView('4821', 'socket-3').mySelected, true);
+  manager.chooseCard('4821', 'socket-1', 12);
+  manager.resolveCards('4821', 'socket-1');
+  assert.equal(manager.getPublicView('4821').phase, 'round-over');
+});
+
 test('starts game and sends private hands only to matching player', () => {
   const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
   manager.createRoom('socket-1', 'Pim');
@@ -82,9 +142,100 @@ test('chooses cards, resolves turn, and updates hands', () => {
   };
   manager.chooseCard('4821', '4821-host', 12);
   manager.chooseCard('4821', 'socket-2', 32);
+  assert.equal(manager.getPublicView('4821').phase, 'reveal');
+  manager.resolveCards('4821', '4821-host');
   assert.equal(manager.getPrivateView('4821', '4821-host').hand.length, 0);
   assert.equal(manager.getPublicView('4821').selectedCount, 0);
   assert.equal(manager.getPublicView('4821').phase, 'round-over');
+});
+
+test('reveals selected cards in placement order before resolving', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1');
+  const room = manager.requireRoom('4821');
+  room.hands = {
+    'socket-1': [{ value: 80, bulls: 3 }],
+    'socket-2': [{ value: 20, bulls: 3 }]
+  };
+
+  manager.chooseCard('4821', 'socket-1', 80);
+  manager.chooseCard('4821', 'socket-2', 20);
+  const view = manager.getPublicView('4821');
+
+  assert.equal(view.phase, 'reveal');
+  assert.deepEqual(view.revealedCards.map((played) => [played.playerId, played.card.value]), [
+    ['socket-2', 20],
+    ['socket-1', 80]
+  ]);
+});
+
+test('only host can resolve revealed cards', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1');
+  const room = manager.requireRoom('4821');
+  room.hands = {
+    'socket-1': [{ value: 80, bulls: 3 }],
+    'socket-2': [{ value: 20, bulls: 3 }]
+  };
+
+  manager.chooseCard('4821', 'socket-1', 80);
+  manager.chooseCard('4821', 'socket-2', 20);
+
+  assert.throws(() => manager.resolveCards('4821', 'socket-2'), /Only the host can resolve/);
+});
+
+test('taking a row immediately reduces hp', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1', { startingHp: 20 });
+  const room = manager.requireRoom('4821');
+  room.rows = [[
+    { value: 10, bulls: 3 },
+    { value: 11, bulls: 5 },
+    { value: 12, bulls: 1 },
+    { value: 13, bulls: 1 },
+    { value: 14, bulls: 1 }
+  ], [{ value: 30, bulls: 3 }], [{ value: 50, bulls: 3 }], [{ value: 70, bulls: 3 }]];
+  room.hands = {
+    'socket-1': [{ value: 15, bulls: 2 }],
+    'socket-2': [{ value: 80, bulls: 3 }]
+  };
+
+  manager.chooseCard('4821', 'socket-1', 15);
+  manager.chooseCard('4821', 'socket-2', 80);
+  manager.resolveCards('4821', 'socket-1');
+
+  assert.equal(manager.getPublicView('4821').players.find((player) => player.id === 'socket-1').hp, 9);
+});
+
+test('game ends when hp reaches zero', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1', { startingHp: 5 });
+  const room = manager.requireRoom('4821');
+  room.rows = [[
+    { value: 10, bulls: 3 },
+    { value: 11, bulls: 5 },
+    { value: 12, bulls: 1 },
+    { value: 13, bulls: 1 },
+    { value: 14, bulls: 1 }
+  ], [{ value: 30, bulls: 3 }], [{ value: 50, bulls: 3 }], [{ value: 70, bulls: 3 }]];
+  room.hands = {
+    'socket-1': [{ value: 15, bulls: 2 }],
+    'socket-2': [{ value: 80, bulls: 3 }]
+  };
+
+  manager.chooseCard('4821', 'socket-1', 15);
+  manager.chooseCard('4821', 'socket-2', 80);
+  manager.resolveCards('4821', 'socket-1');
+
+  assert.equal(manager.getPublicView('4821').phase, 'game-over');
 });
 
 test('command methods return public views without private hands', () => {
@@ -115,6 +266,7 @@ test('public view exposes pending player and card for row choice', () => {
 
   manager.chooseCard('4821', 'socket-1', 5);
   manager.chooseCard('4821', 'socket-2', 32);
+  manager.resolveCards('4821', 'socket-1');
   const view = manager.getPublicView('4821');
 
   assert.equal(view.phase, 'choose-row');
@@ -165,29 +317,8 @@ test('blocks non-host from starting the next round', () => {
   };
   manager.chooseCard('4821', 'socket-1', 12);
   manager.chooseCard('4821', 'socket-2', 32);
+  manager.resolveCards('4821', 'socket-1');
 
   assert.equal(manager.getPublicView('4821').phase, 'round-over');
   assert.throws(() => manager.nextRound('4821', 'socket-2'), /Only the host can continue/);
-});
-
-test('finishes game when score reaches limit', () => {
-  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
-  manager.createRoom('socket-1', 'Pim');
-  manager.joinRoom('4821', 'socket-2', 'Friend');
-  manager.startGame('4821', 'socket-1');
-  const room = manager.requireRoom('4821');
-  room.players[0].score = 65;
-  room.rows = [[{ value: 10, bulls: 3 }], [{ value: 30, bulls: 3 }], [{ value: 50, bulls: 3 }], [{ value: 70, bulls: 3 }]];
-  room.hands = {
-    'socket-1': [{ value: 12, bulls: 1 }],
-    'socket-2': [{ value: 32, bulls: 1 }]
-  };
-  room.roundPenaltyCards['socket-1'] = [{ value: 5, bulls: 1 }];
-
-  manager.chooseCard('4821', 'socket-1', 12);
-  manager.chooseCard('4821', 'socket-2', 32);
-  const view = manager.getPublicView('4821');
-
-  assert.equal(view.phase, 'game-over');
-  assert.equal(view.players.find((player) => player.id === 'socket-1').score, 66);
 });
