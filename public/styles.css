@@ -1016,3 +1016,8 @@ input:focus {
 .row-taken-flash {
   animation: row-take-flash 0.8s ease-out;
 }
+
+.flying-card {
+  will-change: transform, opacity;
+  z-index: 1000 !important;
+}

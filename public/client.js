@@ -108,6 +108,16 @@ function startResolveAnimation(previousState, nextState) {
     const log = newLogs[logIndex];
     logIndex++;
 
+    const cardValue = log.card?.value;
+    let startRect = null;
+    if (cardValue) {
+      // Find the card in the reveal panel or pending banner
+      const revealEl = document.querySelector(`.reveal-cards [data-card="${cardValue}"], .pending-banner [data-card="${cardValue}"]`);
+      if (revealEl) {
+        startRect = revealEl.getBoundingClientRect();
+      }
+    }
+
     // Clear previous flash states
     for (const r of currentAnimatingState.rows) {
       delete r.justTaken;
@@ -126,7 +136,29 @@ function startResolveAnimation(previousState, nextState) {
     state = currentAnimatingState;
     render();
 
-    setTimeout(processNextLog, 900);
+    if (cardValue && startRect) {
+      const placedEl = document.querySelector(`.rows [data-card="${cardValue}"]`);
+      if (placedEl) {
+        const endRect = placedEl.getBoundingClientRect();
+        const deltaX = startRect.left - endRect.left;
+        const deltaY = startRect.top - endRect.top;
+
+        // Reset any inline transform and apply FLIP starting coordinate
+        placedEl.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+        placedEl.style.transition = 'none';
+        placedEl.style.zIndex = '1000';
+
+        // Force a style reflow to apply the inline transform instantly
+        placedEl.offsetHeight;
+
+        // Apply transition to target position
+        placedEl.classList.add('flying-card');
+        placedEl.style.transform = 'none';
+        placedEl.style.transition = 'transform 0.65s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.65s ease';
+      }
+    }
+
+    setTimeout(processNextLog, 1050);
   }
 
   processNextLog();
@@ -454,9 +486,7 @@ function renderCard(card, options = {}) {
     pending ? 'pending-card-art' : '',
     card?.justPlaced ? 'just-placed' : ''
   ].filter(Boolean).join(' ');
-  const attributes = selectable
-    ? `data-card="${value}" aria-label="Choose card ${value}, ${bulls} penalty points"`
-    : `aria-label="Card ${value}, ${bulls} penalty points"`;
+  const attributes = `data-card="${value}" aria-label="${selectable ? 'Choose card' : 'Card'} ${value}, ${bulls} penalty points"`;
   const tagName = selectable ? 'button' : 'span';
   const buttonType = selectable ? ' type="button"' : '';
 
