@@ -999,7 +999,7 @@ input:focus {
 }
 
 .just-placed {
-  animation: card-place-anim 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  /* Disabling keyframe animation to avoid conflicting with the FLIP slide animation */
 }
 
 @keyframes row-take-flash {
@@ -1020,4 +1020,21 @@ input:focus {
 .flying-card {
   will-change: transform, opacity;
   z-index: 1000 !important;
+}
+
+.nimmt-card.client-selected {
+  border-color: var(--focus) !important;
+  box-shadow: 0 0 0 4px rgba(255, 226, 122, 0.8), 0 12px 28px rgba(32, 20, 12, 0.3) !important;
+  transform: translateY(-12px) scale(1.04);
+  transition: transform 180ms cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 180ms ease, border-color 180ms ease !important;
+}
+
+.confirm-btn {
+  background: #2e7d32 !important;
+  border-color: #1b5e20 !important;
+  box-shadow: 0 4px 12px rgba(46, 125, 50, 0.28) !important;
+}
+
+.confirm-btn:hover {
+  background: #1b5e20 !important;
 }

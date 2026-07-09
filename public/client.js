@@ -5,6 +5,7 @@ const ACK_TIMEOUT_MS = 8000;
 let state = null;
 let error = '';
 let busyEvent = '';
+let clientSelectedCard = null;
 
 renderHome();
 
@@ -13,6 +14,9 @@ socket.on('state', (nextState) => {
   state = nextState;
   error = '';
   busyEvent = '';
+  if (nextState.phase !== 'choosing') {
+    clientSelectedCard = null;
+  }
 
   const animatePhases = ['choosing', 'choose-row', 'round-over', 'game-over'];
   if (previousState && 
@@ -111,10 +115,12 @@ function startResolveAnimation(previousState, nextState) {
     const cardValue = log.card?.value;
     let startRect = null;
     if (cardValue) {
-      // Find the card in the reveal panel or pending banner
       const revealEl = document.querySelector(`.reveal-cards [data-card="${cardValue}"], .pending-banner [data-card="${cardValue}"]`);
       if (revealEl) {
         startRect = revealEl.getBoundingClientRect();
+        console.log(`[Animation Debug] Card ${cardValue} - Measured start Rect:`, startRect);
+      } else {
+        console.warn(`[Animation Debug] Card ${cardValue} - Could NOT find reveal element`);
       }
     }
 
@@ -140,8 +146,10 @@ function startResolveAnimation(previousState, nextState) {
       const placedEl = document.querySelector(`.rows [data-card="${cardValue}"]`);
       if (placedEl) {
         const endRect = placedEl.getBoundingClientRect();
+        console.log(`[Animation Debug] Card ${cardValue} - Measured end Rect:`, endRect);
         const deltaX = startRect.left - endRect.left;
         const deltaY = startRect.top - endRect.top;
+        console.log(`[Animation Debug] Card ${cardValue} - Computed offset: deltaX=${deltaX}px, deltaY=${deltaY}px`);
 
         // Reset any inline transform and apply FLIP starting coordinate
         placedEl.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
@@ -151,14 +159,20 @@ function startResolveAnimation(previousState, nextState) {
         // Force a style reflow to apply the inline transform instantly
         placedEl.offsetHeight;
 
-        // Apply transition to target position
-        placedEl.classList.add('flying-card');
-        placedEl.style.transform = 'none';
-        placedEl.style.transition = 'transform 0.65s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.65s ease';
+        // Apply transition to target position in the next paint frame
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            placedEl.classList.add('flying-card');
+            placedEl.style.transform = 'none';
+            placedEl.style.transition = 'transform 0.85s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.85s ease';
+          });
+        });
+      } else {
+        console.warn(`[Animation Debug] Card ${cardValue} - Could NOT find target placed element in row`);
       }
     }
 
-    setTimeout(processNextLog, 1050);
+    setTimeout(processNextLog, 1300);
   }
 
   processNextLog();
@@ -357,10 +371,15 @@ function renderGame() {
         <section class="hand-panel" aria-labelledby="hand-title">
           <div class="hand-heading">
             <h2 id="hand-title">${handTitle}</h2>
-            <span>${escapeHtml(handStatusText())}</span>
+            ${clientSelectedCard && choosingCard
+              ? `<button id="confirm-card" type="button" class="primary-action confirm-btn">Confirm Card ${clientSelectedCard}</button>`
+              : `<span>${escapeHtml(handStatusText())}</span>`}
           </div>
           <div class="cards hand-cards">
-            ${(state.hand || []).map((card) => renderCard(card, { selectable: choosingCard })).join('')}
+            ${(state.hand || []).map((card) => renderCard(card, { 
+              selectable: choosingCard, 
+              clientSelected: card.value === clientSelectedCard 
+            })).join('')}
           </div>
         </section>
       </section>
@@ -401,12 +420,26 @@ function renderGame() {
     </section>
   `;
 
-  document.querySelectorAll('[data-card]').forEach((cardButton) => {
-    cardButton.addEventListener('click', () => {
-      if (busyEvent) return;
-      emit('choose-card', { value: Number(cardButton.dataset.card) });
+  if (choosingCard) {
+    document.querySelectorAll('.hand-cards button[data-card]').forEach((cardButton) => {
+      cardButton.addEventListener('click', () => {
+        if (busyEvent) return;
+        const val = Number(cardButton.dataset.card);
+        if (clientSelectedCard === val) {
+          clientSelectedCard = null;
+        } else {
+          clientSelectedCard = val;
+        }
+        render();
+      });
     });
-  });
+
+    document.querySelector('#confirm-card')?.addEventListener('click', () => {
+      if (busyEvent || !clientSelectedCard) return;
+      emit('choose-card', { value: clientSelectedCard });
+      clientSelectedCard = null;
+    });
+  }
 
   document.querySelectorAll('[data-row]').forEach((rowChoice) => {
     const chooseRow = () => {
