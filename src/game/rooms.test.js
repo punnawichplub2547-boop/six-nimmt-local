@@ -322,3 +322,54 @@ test('blocks non-host from starting the next round', () => {
   assert.equal(manager.getPublicView('4821').phase, 'round-over');
   assert.throws(() => manager.nextRound('4821', 'socket-2'), /Only the host can continue/);
 });
+
+test('game does not end mid-round when hp reaches zero, only at the end of the round', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1', { startingHp: 5 });
+  const room = manager.requireRoom('4821');
+  
+  room.rows = [[
+    { value: 10, bulls: 3 },
+    { value: 11, bulls: 5 },
+    { value: 12, bulls: 1 },
+    { value: 13, bulls: 1 },
+    { value: 14, bulls: 1 }
+  ], [{ value: 30, bulls: 3 }], [{ value: 50, bulls: 3 }], [{ value: 70, bulls: 3 }]];
+
+  room.hands = {
+    'socket-1': [{ value: 15, bulls: 2 }, { value: 32, bulls: 1 }],
+    'socket-2': [{ value: 80, bulls: 3 }, { value: 81, bulls: 3 }]
+  };
+
+  manager.chooseCard('4821', 'socket-1', 15);
+  manager.chooseCard('4821', 'socket-2', 80);
+  manager.resolveCards('4821', 'socket-1');
+
+  assert.equal(manager.getPublicView('4821').phase, 'choosing');
+  assert.equal(manager.getPublicView('4821').players.find(p => p.id === 'socket-1').hp, -6);
+
+  manager.chooseCard('4821', 'socket-1', 32);
+  manager.chooseCard('4821', 'socket-2', 81);
+  manager.resolveCards('4821', 'socket-1');
+
+  assert.equal(manager.getPublicView('4821').phase, 'game-over');
+});
+
+test('host can restart game from game-over phase to lobby', () => {
+  const manager = new RoomManager({ codeGenerator: () => '4821', rng: () => 0.42 });
+  manager.createRoom('socket-1', 'Pim');
+  manager.joinRoom('4821', 'socket-2', 'Friend');
+  manager.startGame('4821', 'socket-1', { startingHp: 5 });
+  const room = manager.requireRoom('4821');
+  room.phase = 'game-over';
+  room.players[0].hp = 0;
+
+  assert.throws(() => manager.restartGame('4821', 'socket-2'), /Only the host can restart the game/);
+
+  const restartedView = manager.restartGame('4821', 'socket-1');
+  assert.equal(restartedView.phase, 'lobby');
+  assert.equal(restartedView.players[0].hp, 5);
+  assert.equal(restartedView.players[1].hp, 5);
+});

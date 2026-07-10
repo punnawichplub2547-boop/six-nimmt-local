@@ -160,10 +160,6 @@ export class RoomManager {
 
     if (result.pending) {
       applyHpDamage(room, result.penaltyCardsByPlayer);
-      if (isGameOver(room)) {
-        endGame(room);
-        return;
-      }
       room.pending = {
         ...result.pending,
         penaltyCardsByPlayer: {}
@@ -173,10 +169,6 @@ export class RoomManager {
     }
 
     applyHpDamage(room, result.penaltyCardsByPlayer);
-    if (isGameOver(room)) {
-      endGame(room);
-      return;
-    }
 
     room.pending = null;
     room.selectedCards = {};
@@ -184,7 +176,11 @@ export class RoomManager {
 
     const roundFinished = Object.values(room.hands).every((hand) => hand.length === 0);
     if (roundFinished) {
-      this.finishRound(room);
+      if (isGameOver(room)) {
+        endGame(room);
+      } else {
+        this.finishRound(room);
+      }
       return;
     }
 
@@ -201,6 +197,28 @@ export class RoomManager {
     if (room.hostId !== socketId) throw new Error('Only the host can continue');
     if (room.phase !== 'round-over') throw new Error('Round is not over');
     this.startNewRound(room);
+    return this.getPublicView(room.code);
+  }
+
+  restartGame(code, socketId) {
+    const room = this.requireRoom(code);
+    if (room.hostId !== socketId) throw new Error('Only the host can restart the game');
+    if (room.phase !== 'game-over') throw new Error('Game is not over');
+    
+    room.phase = 'lobby';
+    room.hands = {};
+    room.rows = [];
+    room.selectedCards = {};
+    room.revealedCards = [];
+    room.roundPenaltyCards = {};
+    room.turn = 0;
+    room.pending = null;
+    room.lastLogs = [{ type: 'round-start' }];
+
+    for (const player of room.players) {
+      player.hp = room.startingHp;
+    }
+
     return this.getPublicView(room.code);
   }
 

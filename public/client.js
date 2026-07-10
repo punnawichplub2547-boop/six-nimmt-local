@@ -253,7 +253,7 @@ function renderHome() {
     <section class="home-screen" aria-labelledby="home-title">
       <div class="brand-panel">
         <p class="kicker">Same Wi-Fi table</p>
-        <h1 id="home-title">6 Nimmt Local</h1>
+        <h1 id="home-title">6 Nimmt</h1>
         <p class="lede">Create a room, pass the code around, and play fast card chaos with 2-4 friends.</p>
       </div>
 
@@ -465,6 +465,11 @@ function renderGame() {
     if (busyEvent) return;
     emit('resolve-cards', {});
   });
+
+  document.querySelector('#restart-game')?.addEventListener('click', () => {
+    if (busyEvent) return;
+    emit('restart-game', {});
+  });
 }
 
 function renderRow(row, index, choosingRow) {
@@ -607,7 +612,12 @@ function renderRoundAction() {
 
   if (state.phase === 'game-over') {
     const winner = [...state.players].sort((a, b) => b.hp - a.hp)[0];
-    return `<p class="game-over-note">Game over. Most HP left wins: ${escapeHtml(winner?.name || 'Player')}.</p>`;
+    return `
+      <p class="game-over-note">Game over. Most HP left wins: ${escapeHtml(winner?.name || 'Player')}.</p>
+      ${state.myId === state.hostId
+        ? `<button id="restart-game" type="button" class="primary-action confirm-btn" style="margin-top: 10px;">Return to Lobby</button>`
+        : `<p class="muted-note" style="margin-top: 10px;">Waiting for the host to restart the game.</p>`}
+    `;
   }
 
   return '';

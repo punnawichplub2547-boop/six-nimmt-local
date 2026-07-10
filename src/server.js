@@ -94,6 +94,15 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('restart-game', (payload = {}, reply) => {
+    handle(getNoPayloadReply(payload, reply), () => {
+      const code = requireJoinedRoom(joinedRoomCode);
+      rooms.restartGame(code, socket.id);
+      emitRoom(code);
+      return rooms.getPrivateView(code, socket.id);
+    });
+  });
+
   socket.on('disconnect', () => {
     rooms.disconnect(socket.id);
     if (joinedRoomCode) emitRoom(joinedRoomCode);
