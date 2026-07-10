@@ -939,12 +939,14 @@ input:focus {
   }
 
   .table-row {
-    grid-template-columns: 32px minmax(0, 1fr);
-    min-height: 108px;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    min-height: 80px;
+    padding: 6px;
+    gap: 6px;
   }
 
   .row-penalty {
-    grid-column: 2;
+    grid-column: unset;
   }
 
   .side-panel {
@@ -957,31 +959,70 @@ input:focus {
     padding-right: 0;
   }
 
-  .nimmt-card {
-    width: 64px;
+  .player-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
   }
 
+  .hand-cards {
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  .nimmt-card {
+    width: 46px;
+    border-width: 1px;
+    border-radius: 6px;
+    box-shadow: 0 3px 6px rgba(32, 20, 12, 0.15);
+  }
+
+  .nimmt-card::before,
+  .nimmt-card::after {
+    height: 7px;
+  }
+  .nimmt-card::before { top: 12px; }
+  .nimmt-card::after { bottom: 12px; }
+
   .compact-card {
-    width: 58px;
+    width: 40px;
   }
 
   .card-slot {
-    width: 74px;
-    min-height: 104px;
+    width: 44px;
+    min-height: 66px;
+    border-width: 1px;
+    border-radius: 6px;
   }
 
   .corner {
-    font-size: 0.8rem;
+    font-size: 0.52rem;
+    padding: 1px;
   }
 
   .big-number {
-    font-size: 2rem;
-    -webkit-text-stroke-width: 2px;
+    font-size: 1.15rem;
+    -webkit-text-stroke-width: 1px;
   }
 
   .compact-card .big-number,
   .pending-card-art .big-number {
-    font-size: 1.85rem;
+    font-size: 1.05rem;
+  }
+
+  .bull-head {
+    transform: scale(0.55);
+    margin-top: -2px;
+  }
+
+  .pips {
+    transform: scale(0.6);
   }
 }
 

@@ -313,7 +313,7 @@ function renderLobby() {
       <div class="panel lobby-list">
         <div class="panel-heading">
           <h2>Players</h2>
-          <span>${state.players.length}/4</span>
+          <span>${state.players.length}/10</span>
         </div>
         ${state.players.map(renderPlayer).join('')}
       </div>
@@ -390,7 +390,9 @@ function renderGame() {
             <h2>HP</h2>
             <span>${state.playerCount || state.players.length} players</span>
           </div>
-          ${state.players.map(renderPlayer).join('')}
+          <div class="player-list">
+            ${state.players.map(renderPlayer).join('')}
+          </div>
         </section>
 
         <section class="side-section">
@@ -488,7 +490,7 @@ function renderRow(row, index, choosingRow) {
     <div class="${rowClass}" ${rowAttributes}>
       <span class="row-label">R${index + 1}</span>
       <span class="row-cards cards">${renderRowSlots(row || [])}</span>
-      <span class="row-penalty">${rowPenalty} HP damage</span>
+      <span class="row-penalty">${rowPenalty} HP<span class="desktop-only"> damage</span></span>
     </div>
   `;
 }

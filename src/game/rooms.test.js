@@ -50,16 +50,16 @@ test('rejects duplicate socket id joins', () => {
 test('blocks joining a full room', () => {
   const manager = new RoomManager({ codeGenerator: () => '4821' });
   manager.createRoom('socket-1', 'Pim');
-  manager.joinRoom('4821', 'socket-2', 'Friend 1');
-  manager.joinRoom('4821', 'socket-3', 'Friend 2');
-  manager.joinRoom('4821', 'socket-4', 'Friend 3');
-  assert.throws(() => manager.joinRoom('4821', 'socket-5', 'Friend 4'), /Room is full/);
+  for (let i = 2; i <= 10; i++) {
+    manager.joinRoom('4821', `socket-${i}`, `Friend ${i - 1}`);
+  }
+  assert.throws(() => manager.joinRoom('4821', 'socket-11', 'Friend 10'), /Room is full/);
 });
 
 test('blocks starting with fewer than two players', () => {
   const manager = new RoomManager({ codeGenerator: () => '4821' });
   manager.createRoom('socket-1', 'Pim');
-  assert.throws(() => manager.startGame('4821', 'socket-1'), /Need 2-4 players/);
+  assert.throws(() => manager.startGame('4821', 'socket-1'), /Need 2-10 players/);
 });
 
 test('blocks non-host from starting a game', () => {

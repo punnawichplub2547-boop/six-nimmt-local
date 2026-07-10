@@ -10,7 +10,7 @@ import {
   sortHand
 } from './rules.js';
 
-const MAX_PLAYERS = 4;
+const MAX_PLAYERS = 10;
 const MIN_PLAYERS = 2;
 const DEFAULT_STARTING_HP = 66;
 const MIN_STARTING_HP = 1;
@@ -71,7 +71,7 @@ export class RoomManager {
     if (room.phase !== 'lobby') throw new Error('Game already started');
     if (room.hostId !== socketId) throw new Error('Only the host can start');
     if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
-      throw new Error('Need 2-4 players');
+      throw new Error('Need 2-10 players');
     }
     room.startingHp = validateStartingHp(options.startingHp ?? room.startingHp);
     for (const player of room.players) player.hp = room.startingHp;
