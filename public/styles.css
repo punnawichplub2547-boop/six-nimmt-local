@@ -1009,12 +1009,37 @@ input:focus {
   .big-number {
     font-size: 1.15rem;
     -webkit-text-stroke-width: 1px;
+    text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.7);
+  }
+
+  /* Hide bull-head, pips, and stripes on tiny compact cards on mobile to prevent clutter */
+  .compact-card .bull-head,
+  .compact-card .pips,
+  .compact-card::before,
+  .compact-card::after,
+  .pending-card-art .bull-head,
+  .pending-card-art .pips,
+  .pending-card-art::before,
+  .pending-card-art::after {
+    display: none !important;
   }
 
   .compact-card .big-number,
   .pending-card-art .big-number {
-    font-size: 1.05rem;
+    font-size: 1.45rem;
+    -webkit-text-stroke-width: 1px;
+    text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.85);
   }
+
+  /* Maximize space on tiny cards by tightening the corners */
+  .compact-card .corner {
+    font-size: 0.48rem;
+    padding: 0;
+  }
+  .compact-card .corner.tl { top: 3px; left: 3px; }
+  .compact-card .corner.tr { top: 3px; right: 3px; }
+  .compact-card .corner.bl { bottom: 3px; left: 3px; }
+  .compact-card .corner.br { bottom: 3px; right: 3px; }
 
   .bull-head {
     transform: scale(0.55);
