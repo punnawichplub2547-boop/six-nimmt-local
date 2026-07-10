@@ -1017,16 +1017,33 @@ input:focus {
     text-shadow: 1.5px 1.5px 0 rgba(255, 255, 255, 0.85);
   }
 
-  /* Hide bull-head, pips, and stripes on tiny compact cards on mobile to prevent clutter */
+  /* Hide bull-head, bottom pips, and stripes on tiny compact cards on mobile to prevent clutter */
   .compact-card .bull-head,
-  .compact-card .pips,
+  .compact-card .pips.bottom,
   .compact-card::before,
   .compact-card::after,
   .pending-card-art .bull-head,
-  .pending-card-art .pips,
+  .pending-card-art .pips.bottom,
   .pending-card-art::before,
   .pending-card-art::after {
     display: none !important;
+  }
+
+  /* Make top pips visible and position it neatly on compact cards */
+  .compact-card .pips.top,
+  .pending-card-art .pips.top {
+    display: flex !important;
+    top: 13px !important;
+  }
+
+  /* Scale down the individual bull-mark penalty dots on compact cards so they fit in 40px width */
+  .compact-card .bull-mark,
+  .pending-card-art .bull-mark {
+    width: 3.5px !important;
+    height: 5.5px !important;
+    border-width: 0.5px !important;
+    border-radius: 50% 50% 45% 45% !important;
+    margin: 0 !important;
   }
 
   /* Only show tl and br corners on tiny compact cards to save space and avoid overlap */
@@ -1053,7 +1070,7 @@ input:focus {
   .compact-card .corner.br { bottom: 3px; right: 3px; }
 
   .bull-head {
-    transform: scale(0.68);
+    transform: translate(-50%, -50%) scale(0.68) !important;
     margin-top: 0;
   }
 
