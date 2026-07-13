@@ -248,6 +248,16 @@ export class RoomManager {
     if (!room) throw new Error('Room not found');
     return room;
   }
+
+  updateStartingHp(code, socketId, startingHp) {
+    const room = this.requireRoom(code);
+    if (room.phase !== 'lobby') throw new Error('Game already started');
+    if (room.hostId !== socketId) throw new Error('Only the host can change settings');
+    room.startingHp = validateStartingHp(startingHp);
+    for (const player of room.players) {
+      player.hp = room.startingHp;
+    }
+  }
 }
 
 function publicView(room) {
