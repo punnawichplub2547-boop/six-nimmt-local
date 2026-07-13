@@ -252,8 +252,11 @@ function renderHome() {
   app.innerHTML = `
     <section class="home-screen" aria-labelledby="home-title">
       <div class="brand-panel">
-        <p class="kicker">Same Wi-Fi table</p>
-        <h1 id="home-title">6 Nimmt</h1>
+        <div class="logo-wrapper">
+          <h1 id="home-title">6 Nimmt</h1>
+          <div class="green-slash"></div>
+        </div>
+        <p class="slogan">Not a Game for the Bullheaded!</p>
         <p class="lede">Create a room, pass the code around, and play fast card chaos with 2-4 friends.</p>
       </div>
 
@@ -285,6 +288,25 @@ function renderHome() {
     </section>
   `;
 
+  const brandPanel = document.querySelector('.brand-panel');
+  if (brandPanel) {
+    brandPanel.addEventListener('mousemove', (event) => {
+      const rect = brandPanel.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const px = x / rect.width;
+      const py = y / rect.height;
+      const rx = (0.5 - py) * 22; // up to 11 deg rotation X
+      const ry = (px - 0.5) * 22; // up to 11 deg rotation Y
+      brandPanel.style.setProperty('--rx', rx.toFixed(2));
+      brandPanel.style.setProperty('--ry', ry.toFixed(2));
+    });
+    brandPanel.addEventListener('mouseleave', () => {
+      brandPanel.style.setProperty('--rx', '0');
+      brandPanel.style.setProperty('--ry', '0');
+    });
+  }
+
   document.querySelector('#create-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -302,33 +324,79 @@ function renderLobby() {
   const isHost = state.myId === state.hostId;
   const canStart = isHost && state.players.length >= 2 && !busyEvent;
 
+  const maxSeats = 10;
+  let seatsHtml = '';
+  for (let i = 0; i < maxSeats; i++) {
+    const player = state.players[i];
+    if (player) {
+      const isMe = player.id === state.myId;
+      const isHostPlayer = player.isHost;
+      const connected = player.connected;
+      const roleClass = isHostPlayer ? 'is-host' : '';
+      const meClass = isMe ? 'is-me' : '';
+      const statusClass = connected ? '' : 'is-offline';
+      
+      const initials = player.name ? player.name.charAt(0).toUpperCase() : '?';
+      const badge = isHostPlayer ? 'Host' : (isMe ? 'You' : (connected ? 'Ready' : 'Offline'));
+      
+      seatsHtml += `
+        <div class="player-seat-card ${roleClass} ${meClass} ${statusClass}">
+          <div class="player-seat-avatar">${initials}</div>
+          <div class="player-seat-name" title="${escapeHtml(player.name)}">${escapeHtml(player.name)}</div>
+          <div class="player-seat-badge">${badge}</div>
+        </div>
+      `;
+    } else {
+      seatsHtml += `
+        <div class="seat-slot empty-seat">
+          <div class="seat-number">${i + 1}</div>
+          <div class="seat-status">Empty Seat</div>
+        </div>
+      `;
+    }
+  }
+
   app.innerHTML = `
     <section class="lobby-screen" aria-labelledby="lobby-title">
-      <div class="lobby-code panel">
-        <p class="kicker">Room code</p>
-        <h1 id="lobby-title">${escapeHtml(state.code)}</h1>
-        <p>Friends can join from the same Wi-Fi using this code.</p>
+      <div class="lobby-ticket-container">
+        <div class="lobby-ticket">
+          <p class="kicker">ROOM TICKET</p>
+          <h1 id="lobby-title">${escapeHtml(state.code)}</h1>
+          <p>Join from the same Wi-Fi using this code.</p>
+          <button type="button" id="copy-code-btn" class="copy-btn">Copy Ticket Code</button>
+        </div>
       </div>
 
-      <div class="panel lobby-list">
-        <div class="panel-heading">
-          <h2>Players</h2>
-          <span>${state.players.length}/10</span>
+      <div class="lobby-table-surface">
+        <div class="lobby-table-heading">
+          <h2>Game Table <span>${state.players.length}/10</span></h2>
         </div>
-        ${state.players.map(renderPlayer).join('')}
+        <div class="seats-grid">
+          ${seatsHtml}
+        </div>
       </div>
 
-      <div class="panel lobby-actions">
-        <div class="hp-setting">
-          <p>${isHost ? 'Start when at least one friend has joined.' : 'Waiting for the host to start.'}</p>
-          ${isHost
-            ? `<label>
-                <span>Starting HP</span>
-                <input id="starting-hp" name="startingHp" type="number" min="1" max="500" step="1" value="${escapeHtml(state.startingHp || 66)}">
-              </label>`
-            : `<p class="muted-note">Starting HP: ${escapeHtml(state.startingHp || 66)}</p>`}
+      <div class="lobby-wooden-board">
+        <div>
+          <p class="hp-label-wood">${isHost ? 'Configure Starting HP' : 'Game Table Settings'}</p>
+          <p class="muted-note" style="color: #c0b094; text-shadow: 1px 1px 0 #000; font-size: 0.8rem; margin-top: 2px;">
+            ${isHost ? 'Set HP limit and start when ready' : 'Waiting for host to deal starting deck'}
+          </p>
         </div>
-        <button id="start" type="button" class="primary-action" ${canStart ? '' : 'disabled'}>
+        
+        <div class="vintage-counter">
+          <p style="color: #f7e1b5; font-size: 0.9rem; font-weight: 850; margin: 0;">Starting HP</p>
+          <div class="vintage-counter-controls">
+            ${isHost 
+              ? `<button type="button" id="hp-dec-btn" class="vintage-dial-btn">&minus;</button>
+                 <input type="number" id="starting-hp-input" class="vintage-score-card-input" min="1" max="500" value="${escapeHtml(state.startingHp || 66)}">
+                 <button type="button" id="hp-inc-btn" class="vintage-dial-btn">&plus;</button>`
+              : `<div class="vintage-score-card">${escapeHtml(state.startingHp || 66)}</div>`
+            }
+          </div>
+        </div>
+
+        <button id="start" type="button" class="${canStart ? 'primary-action start-pulsing' : 'primary-action'}" ${canStart ? '' : 'disabled'} style="box-shadow: 0 6px 12px rgba(0,0,0,0.4);">
           Start Game
         </button>
       </div>
@@ -337,8 +405,69 @@ function renderLobby() {
     </section>
   `;
 
+  // Attach Copy button event listener
+  document.querySelector('#copy-code-btn')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(state.code).then(() => {
+      const btn = document.querySelector('#copy-code-btn');
+      if (btn) {
+        const oldText = btn.textContent;
+        btn.textContent = 'Copied! ✓';
+        btn.style.color = '#2e7d32';
+        btn.style.borderColor = '#2e7d32';
+        setTimeout(() => {
+          btn.textContent = oldText;
+          btn.style.color = '';
+          btn.style.borderColor = '';
+        }, 2000);
+      }
+    });
+  });
+
+  // Attach dial counter listeners for host
+  if (isHost) {
+    const hpInput = document.querySelector('#starting-hp-input');
+    
+    if (hpInput) {
+      hpInput.addEventListener('input', (event) => {
+        const val = Number(event.target.value);
+        if (val >= 1 && val <= 500) {
+          state.startingHp = val;
+        }
+      });
+      hpInput.addEventListener('blur', (event) => {
+        let val = Number(event.target.value);
+        if (!val || val < 1) val = 1;
+        if (val > 500) val = 500;
+        hpInput.value = val;
+        state.startingHp = val;
+        emit('update-hp', { startingHp: val });
+      });
+    }
+
+    document.querySelector('#hp-dec-btn')?.addEventListener('click', () => {
+      if (hpInput) {
+        const current = Number(hpInput.value);
+        const next = Math.max(1, current - 1);
+        hpInput.value = next;
+        state.startingHp = next;
+        emit('update-hp', { startingHp: next });
+      }
+    });
+
+    document.querySelector('#hp-inc-btn')?.addEventListener('click', () => {
+      if (hpInput) {
+        const current = Number(hpInput.value);
+        const next = Math.min(500, current + 1);
+        hpInput.value = next;
+        state.startingHp = next;
+        emit('update-hp', { startingHp: next });
+      }
+    });
+  }
+
   document.querySelector('#start').addEventListener('click', () => {
-    const startingHp = Number(document.querySelector('#starting-hp')?.value || state.startingHp || 66);
+    const hpInput = document.querySelector('#starting-hp-input');
+    const startingHp = hpInput ? Number(hpInput.value) : (state.startingHp || 66);
     emit('start-game', { startingHp });
   });
 }
