@@ -47,6 +47,16 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('update-hp', (payload = {}, reply) => {
+    handle(reply, () => {
+      const { startingHp } = payload ?? {};
+      const code = requireJoinedRoom(joinedRoomCode);
+      rooms.updateStartingHp(code, socket.id, startingHp);
+      emitRoom(code);
+      return rooms.getPrivateView(code, socket.id);
+    });
+  });
+
   socket.on('start-game', (payload = {}, reply) => {
     handle(getNoPayloadReply(payload, reply), () => {
       const code = requireJoinedRoom(joinedRoomCode);
